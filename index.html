@@ -61,8 +61,8 @@
   <h1>Reel Control</h1>
   <div class="conn err" id="conn">Connecting...</div>
   <div class="status">State: <span id="st">--</span></div>
-  <button class="btn up"   ontouchstart="hold('up')" ontouchend="release()" onmousedown="hold('up')" onmouseup="release()" onmouseleave="release()">UP</button>
-  <button class="btn down" ontouchstart="hold('down')" ontouchend="release()" onmousedown="hold('down')" onmouseup="release()" onmouseleave="release()">DOWN</button>
+  <button class="btn up"   id="btnUp">UP</button>
+  <button class="btn down" id="btnDown">DOWN</button>
   <button class="logout" onclick="doLogout()">Logout</button>
 </div>
 
@@ -205,18 +205,42 @@ function send(cmd) {
 }
 
 var holdActive = false;
-function hold(cmd) {
-  if (!holdActive) {
-    holdActive = true;
-    send(cmd);
-  }
+var isTouch = false;
+
+function setupButton(id, cmd) {
+  var btn = document.getElementById(id);
+
+  btn.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    isTouch = true;
+    if (!holdActive) { holdActive = true; send(cmd); }
+  }, {passive: false});
+
+  btn.addEventListener('touchend', function(e) {
+    e.preventDefault();
+    if (holdActive) { holdActive = false; send('stop'); }
+  }, {passive: false});
+
+  btn.addEventListener('touchcancel', function(e) {
+    if (holdActive) { holdActive = false; send('stop'); }
+  });
+
+  btn.addEventListener('mousedown', function(e) {
+    if (isTouch) { isTouch = false; return; }
+    if (!holdActive) { holdActive = true; send(cmd); }
+  });
+
+  btn.addEventListener('mouseup', function(e) {
+    if (holdActive) { holdActive = false; send('stop'); }
+  });
+
+  btn.addEventListener('mouseleave', function(e) {
+    if (holdActive) { holdActive = false; send('stop'); }
+  });
 }
-function release() {
-  if (holdActive) {
-    holdActive = false;
-    send('stop');
-  }
-}
+
+setupButton('btnUp', 'up');
+setupButton('btnDown', 'down');
 
 // Auto-login from cache
 (async function() {
