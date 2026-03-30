@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta http-equiv="X-Content-Type-Options" content="nosniff">
+<meta http-equiv="X-Frame-Options" content="DENY">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://unpkg.com 'unsafe-inline'; connect-src wss://broker.emqx.io:8084; style-src 'unsafe-inline';">
+<title>Reel</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, sans-serif; text-align: center;
+         background: #1a1a2e; color: #eee; margin: 0; padding: 20px;
+         min-height: 100vh; }
+  h1 { font-size: 1.5em; margin-bottom: 10px; }
+
+  /* Login */
+  #login { max-width: 340px; margin: 80px auto 0; }
+  #login input { width: 100%; padding: 14px; font-size: 1em; border: 2px solid #333;
+                 border-radius: 8px; background: #0d0d1a; color: #eee;
+                 margin: 10px 0; text-align: center; }
+  #login button { width: 100%; padding: 14px; font-size: 1.1em; font-weight: bold;
+                  border: none; border-radius: 8px; background: #2ecc71;
+                  color: #fff; cursor: pointer; margin-top: 5px; }
+  #login .err { color: #e74c3c; font-size: 0.9em; min-height: 1.2em; margin: 5px 0; }
+
+  /* Control */
+  #control { display: none; }
+  .conn { font-size: 0.9em; margin: 5px 0 15px; }
+  .conn.ok { color: #2ecc71; }
+  .conn.err { color: #e74c3c; }
+  .status { font-size: 1.3em; margin: 15px 0; color: #0ff; }
+  .btn { display: block; width: 80%; max-width: 300px; margin: 15px auto;
+         padding: 25px; font-size: 1.4em; font-weight: bold; border: none;
+         border-radius: 12px; cursor: pointer; color: #fff;
+         -webkit-tap-highlight-color: transparent; }
+  .up   { background: #2ecc71; }
+  .stop { background: #e74c3c; }
+  .down { background: #3498db; }
+  .btn:active { opacity: 0.7; }
+  .logout { background: none; border: 1px solid #555; color: #888;
+            font-size: 0.8em; padding: 8px 16px; border-radius: 6px;
+            cursor: pointer; margin-top: 30px; display: inline-block; }
+</style>
+</head>
+<body>
+
+<!-- Login screen -->
+<div id="login">
+  <h1>Reel Control</h1>
+  <p style="color:#888; font-size:0.9em;">Enter access key</p>
+  <input type="password" id="keyInput" placeholder="Access key" autocomplete="off">
+  <div class="err" id="loginErr"></div>
+  <button onclick="tryLogin()">Unlock</button>
+</div>
+
+<!-- Control screen -->
+<div id="control">
+  <h1>Reel Control</h1>
+  <div class="conn err" id="conn">Connecting...</div>
+  <div class="status">State: <span id="st">--</span></div>
+  <button class="btn up"   ontouchstart="send('up')"   onclick="send('up')">UP</button>
+  <button class="btn stop" ontouchstart="send('stop')" onclick="send('stop')">STOP</button>
+  <button class="btn down" ontouchstart="send('down')" onclick="send('down')">DOWN</button>
+  <button class="logout" onclick="doLogout()">Logout</button>
+</div>
+
+<script src="https://unpkg.com/mqtt@5/dist/mqtt.min.js"
+        integrity="sha384-yYo6Rf8oE1ymBEWidpn7Brg0E6BGJiencXj3K2GmcU9dlFZ1fIhEqimYrhQij0r0"
+        crossorigin="anonymous"></script>
+<script>
+// Encrypted credentials blob (AES-256-GCM, PBKDF2 key derivation)
+var ENCRYPTED = {
+  salt: "IhZSo8rzgO40Qf3TzYo+FQ==",
+  nonce: "VxoP/Bwi/8/sz5hi",
+  iterations: 600000,
+  ciphertext: "yOsqF+Gf5sCpzcnELCUPLt1p+eyGAQDWYUgnXTbn/a2hy+IwuQK2EgwIoKXas3BC1v+5uLjjnB1rRUYp25r2278kpZaPD4HhTM0ntmSWKTmbPCLcFV5nLFrb5LEl2Oow1iG6LFocpyLi+imlOw08xxOOhax4vd2MgVIkeMA4w+2U5VZs0dPWHVSB3H8Uadbla1hgmrRgbWiz8IX8EMqqXdHL/Wtr+skgp6CL6B8V/TOFpDhlnTMnpW4RWrB3q/YV4PfawsIQp7zd+s6UDZTRBNktWnJ8nxKRa4qu5cTcjNzr7nj3MozFZUpAMG3+YZ7LVV4Nhbt2Fm6zESPRMkdOGY1K"
+};
+
+var mqttClient = null;
+var secrets = null;
+
+function b64decode(s) { return Uint8Array.from(atob(s), function(c){return c.charCodeAt(0)}); }
+
+async function deriveKey(passphrase, salt, iterations) {
+  var enc = new TextEncoder();
+  var keyMaterial = await crypto.subtle.importKey("raw", enc.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: salt, iterations: iterations, hash: "SHA-256" },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"]
+  );
+}
+
+async function decrypt(passphrase) {
+  var salt = b64decode(ENCRYPTED.salt);
+  var nonce = b64decode(ENCRYPTED.nonce);
+  var ct = b64decode(ENCRYPTED.ciphertext);
+  var key = await deriveKey(passphrase, salt, ENCRYPTED.iterations);
+  var plainBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, key, ct);
+  return JSON.parse(new TextDecoder().decode(plainBuf));
+}
+
+async function tryLogin() {
+  var key = document.getElementById('keyInput').value.trim();
+  if (!key) return;
+  try {
+    secrets = await decrypt(key);
+    // Store key hash in localStorage (not the key itself)
+    var enc = new TextEncoder();
+    var hash = await crypto.subtle.digest("SHA-256", enc.encode("reel-auth-" + key));
+    var hashHex = Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0')}).join('');
+    // Store encrypted secrets in sessionStorage (survives refresh, not tabs)
+    // and localStorage for persistent login (encrypted with browser-derived key)
+    var storageKey = await crypto.subtle.digest("SHA-256", enc.encode("reel-storage-" + navigator.userAgent));
+    var storageKeyHex = Array.from(new Uint8Array(storageKey)).map(function(b){return b.toString(16).padStart(2,'0')}).join('');
+    // Re-encrypt secrets with a key derived from the storage key
+    var reKey = await crypto.subtle.importKey("raw", storageKey, "AES-GCM", false, ["encrypt"]);
+    var reNonce = crypto.getRandomValues(new Uint8Array(12));
+    var reCt = await crypto.subtle.encrypt({name:"AES-GCM", iv:reNonce}, reKey, new TextEncoder().encode(JSON.stringify(secrets)));
+    var stored = JSON.stringify({
+      nonce: btoa(String.fromCharCode.apply(null, reNonce)),
+      ct: btoa(String.fromCharCode.apply(null, new Uint8Array(reCt)))
+    });
+    localStorage.setItem('reel_session', stored);
+    showControl();
+  } catch(e) {
+    document.getElementById('loginErr').textContent = 'Invalid key';
+    document.getElementById('keyInput').value = '';
+  }
+}
+
+function doLogout() {
+  localStorage.removeItem('reel_session');
+  if (mqttClient) { mqttClient.end(); mqttClient = null; }
+  secrets = null;
+  document.getElementById('control').style.display = 'none';
+  document.getElementById('login').style.display = 'block';
+  document.getElementById('keyInput').value = '';
+  document.getElementById('loginErr').textContent = '';
+}
+
+function showControl() {
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('control').style.display = 'block';
+  connectMQTT();
+}
+
+function connectMQTT() {
+  mqttClient = mqtt.connect('wss://' + secrets.mqtt_host + ':' + secrets.mqtt_ws_port + '/mqtt', {
+    clientId: 'reel-phone-' + Math.random().toString(16).slice(2, 8),
+    username: secrets.mqtt_user,
+    password: secrets.mqtt_pass,
+    clean: true,
+    reconnectPeriod: 3000
+  });
+
+  mqttClient.on('connect', function() {
+    document.getElementById('conn').textContent = 'Connected';
+    document.getElementById('conn').className = 'conn ok';
+    mqttClient.subscribe(secrets.topic_state);
+  });
+
+  mqttClient.on('offline', function() {
+    document.getElementById('conn').textContent = 'Disconnected';
+    document.getElementById('conn').className = 'conn err';
+  });
+
+  mqttClient.on('error', function() {
+    document.getElementById('conn').textContent = 'Connection error';
+    document.getElementById('conn').className = 'conn err';
+  });
+
+  mqttClient.on('message', function(topic, msg) {
+    if (topic === secrets.topic_state) {
+      document.getElementById('st').textContent = msg.toString();
+    }
+  });
+}
+
+function send(cmd) {
+  if (mqttClient && mqttClient.connected) {
+    mqttClient.publish(secrets.topic_cmd, cmd);
+  }
+}
+
+// Auto-login from cache
+(async function() {
+  var stored = localStorage.getItem('reel_session');
+  if (stored) {
+    try {
+      var parsed = JSON.parse(stored);
+      var enc = new TextEncoder();
+      var storageKey = await crypto.subtle.digest("SHA-256", enc.encode("reel-storage-" + navigator.userAgent));
+      var reKey = await crypto.subtle.importKey("raw", storageKey, "AES-GCM", false, ["decrypt"]);
+      var reNonce = b64decode(parsed.nonce);
+      var reCt = b64decode(parsed.ct);
+      var plain = await crypto.subtle.decrypt({name:"AES-GCM", iv:reNonce}, reKey, reCt);
+      secrets = JSON.parse(new TextDecoder().decode(plain));
+      showControl();
+    } catch(e) {
+      localStorage.removeItem('reel_session');
+    }
+  }
+})();
+
+// Enter key to submit
+document.getElementById('keyInput').addEventListener('keyup', function(e) {
+  if (e.key === 'Enter') tryLogin();
+});
+</script>
+</body>
+</html>
