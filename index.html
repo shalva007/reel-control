@@ -69,13 +69,21 @@
         integrity="sha384-yYo6Rf8oE1ymBEWidpn7Brg0E6BGJiencXj3K2GmcU9dlFZ1fIhEqimYrhQij0r0"
         crossorigin="anonymous"></script>
 <script>
-// Encrypted credentials blob (AES-256-GCM, PBKDF2 key derivation)
-var ENCRYPTED = {
-  salt: "IhZSo8rzgO40Qf3TzYo+FQ==",
-  nonce: "VxoP/Bwi/8/sz5hi",
-  iterations: 600000,
-  ciphertext: "yOsqF+Gf5sCpzcnELCUPLt1p+eyGAQDWYUgnXTbn/a2hy+IwuQK2EgwIoKXas3BC1v+5uLjjnB1rRUYp25r2278kpZaPD4HhTM0ntmSWKTmbPCLcFV5nLFrb5LEl2Oow1iG6LFocpyLi+imlOw08xxOOhax4vd2MgVIkeMA4w+2U5VZs0dPWHVSB3H8Uadbla1hgmrRgbWiz8IX8EMqqXdHL/Wtr+skgp6CL6B8V/TOFpDhlnTMnpW4RWrB3q/YV4PfawsIQp7zd+s6UDZTRBNktWnJ8nxKRa4qu5cTcjNzr7nj3MozFZUpAMG3+YZ7LVV4Nhbt2Fm6zESPRMkdOGY1K"
-};
+// Encrypted credentials — each key decrypts one blob (AES-256-GCM, PBKDF2)
+var ENCRYPTED_KEYS = [
+  {
+    salt: "IhZSo8rzgO40Qf3TzYo+FQ==",
+    nonce: "VxoP/Bwi/8/sz5hi",
+    iterations: 600000,
+    ciphertext: "yOsqF+Gf5sCpzcnELCUPLt1p+eyGAQDWYUgnXTbn/a2hy+IwuQK2EgwIoKXas3BC1v+5uLjjnB1rRUYp25r2278kpZaPD4HhTM0ntmSWKTmbPCLcFV5nLFrb5LEl2Oow1iG6LFocpyLi+imlOw08xxOOhax4vd2MgVIkeMA4w+2U5VZs0dPWHVSB3H8Uadbla1hgmrRgbWiz8IX8EMqqXdHL/Wtr+skgp6CL6B8V/TOFpDhlnTMnpW4RWrB3q/YV4PfawsIQp7zd+s6UDZTRBNktWnJ8nxKRa4qu5cTcjNzr7nj3MozFZUpAMG3+YZ7LVV4Nhbt2Fm6zESPRMkdOGY1K"
+  },
+  {
+    salt: "rbfdzo+qEwwljqVwcnBCTQ==",
+    nonce: "+7+XWzj+Nkj9vKOF",
+    iterations: 600000,
+    ciphertext: "v4K/SXvL/q+1pKfdwH/yNCJ+VxvzkABZ246VpQfp8yZosHf3RYu1ZLztWAdbWyjAbSmnfOVMp9xp7UnkH/xctv20GUObN06XhPYiy8JgdpTllVnhEKQc+MJN3sJ9GvlFwJhReYhfW9QwmEMpGayIL6qFBUyxh4e5mmhlu3hw3gtjxt8Ub8nkUQSQhX3paujE8d8gg685zYx57knkYjGq2sW7ICGjDQdtbT/v788bl7aGStnj6KMVf8BmM6OknzNr4MO30zD4Q7JAvcpTT7BbPI0I9+GsYBrnhAjok64dmn9wTMUUqxizjwt9jtt75ODwIO/yKcGoPxGTLk0Sc0vsX7u6"
+  }
+];
 
 var mqttClient = null;
 var secrets = null;
@@ -94,13 +102,24 @@ async function deriveKey(passphrase, salt, iterations) {
   );
 }
 
-async function decrypt(passphrase) {
-  var salt = b64decode(ENCRYPTED.salt);
-  var nonce = b64decode(ENCRYPTED.nonce);
-  var ct = b64decode(ENCRYPTED.ciphertext);
-  var key = await deriveKey(passphrase, salt, ENCRYPTED.iterations);
+async function tryDecryptBlob(passphrase, blob) {
+  var salt = b64decode(blob.salt);
+  var nonce = b64decode(blob.nonce);
+  var ct = b64decode(blob.ciphertext);
+  var key = await deriveKey(passphrase, salt, blob.iterations);
   var plainBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, key, ct);
   return JSON.parse(new TextDecoder().decode(plainBuf));
+}
+
+async function decrypt(passphrase) {
+  // Strip any invisible characters from copy-paste
+  passphrase = passphrase.replace(/[^\x20-\x7E]/g, '');
+  for (var i = 0; i < ENCRYPTED_KEYS.length; i++) {
+    try {
+      return await tryDecryptBlob(passphrase, ENCRYPTED_KEYS[i]);
+    } catch(e) { /* try next */ }
+  }
+  throw new Error("Invalid key");
 }
 
 async function tryLogin() {
