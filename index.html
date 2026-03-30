@@ -65,9 +65,7 @@
   <button class="logout" onclick="doLogout()">Logout</button>
 </div>
 
-<script src="https://unpkg.com/mqtt@5/dist/mqtt.min.js"
-        integrity="sha384-yYo6Rf8oE1ymBEWidpn7Brg0E6BGJiencXj3K2GmcU9dlFZ1fIhEqimYrhQij0r0"
-        crossorigin="anonymous"></script>
+<script src="https://unpkg.com/mqtt@5.15.1/dist/mqtt.min.js"></script>
 <script>
 // Encrypted credentials — each key decrypts one blob (AES-256-GCM, PBKDF2)
 var ENCRYPTED_KEYS = [
@@ -146,7 +144,7 @@ async function tryLogin() {
     localStorage.setItem('reel_session', stored);
     showControl();
   } catch(e) {
-    document.getElementById('loginErr').textContent = 'Invalid key';
+    document.getElementById('loginErr').textContent = 'Invalid key (' + e.message + ')';
     document.getElementById('keyInput').value = '';
   }
 }
