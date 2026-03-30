@@ -38,7 +38,6 @@
          border-radius: 12px; cursor: pointer; color: #fff;
          -webkit-tap-highlight-color: transparent; }
   .up   { background: #2ecc71; }
-  .stop { background: #e74c3c; }
   .down { background: #3498db; }
   .btn:active { opacity: 0.7; }
   .logout { background: none; border: 1px solid #555; color: #888;
@@ -62,9 +61,8 @@
   <h1>Reel Control</h1>
   <div class="conn err" id="conn">Connecting...</div>
   <div class="status">State: <span id="st">--</span></div>
-  <button class="btn up"   ontouchstart="send('up')"   onclick="send('up')">UP</button>
-  <button class="btn stop" ontouchstart="send('stop')" onclick="send('stop')">STOP</button>
-  <button class="btn down" ontouchstart="send('down')" onclick="send('down')">DOWN</button>
+  <button class="btn up"   ontouchstart="hold('up')" ontouchend="release()" onmousedown="hold('up')" onmouseup="release()" onmouseleave="release()">UP</button>
+  <button class="btn down" ontouchstart="hold('down')" ontouchend="release()" onmousedown="hold('down')" onmouseup="release()" onmouseleave="release()">DOWN</button>
   <button class="logout" onclick="doLogout()">Logout</button>
 </div>
 
@@ -203,6 +201,20 @@ function connectMQTT() {
 function send(cmd) {
   if (mqttClient && mqttClient.connected) {
     mqttClient.publish(secrets.topic_cmd, cmd);
+  }
+}
+
+var holdActive = false;
+function hold(cmd) {
+  if (!holdActive) {
+    holdActive = true;
+    send(cmd);
+  }
+}
+function release() {
+  if (holdActive) {
+    holdActive = false;
+    send('stop');
   }
 }
 
